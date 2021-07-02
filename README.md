@@ -519,5 +519,719 @@ module.exports = {
 }
 ```
 
-### webpack优化配置
+## webpack优化
+
+### 开发环境
+
+#### HMR
+
+Hot module replacement：一个模块发生变化，只会重新打包这一个模块（而不是打包所有模块），极大提升构建速度。
+
+1. css：style-loader已经实现
+2. js：默认不使用HMR，需要修改js代码，添加支持HMR功能的代码，只能处理非入口js文件的其他文件。
+3. html：默认不能使用HMR
+
+```js
+//webpack.config.js 开启HMR
+const webpack = require("webpack")
+
+module.exports = {
+	...,
+	devServer:{
+      hot: true
+    },
+    plugins:[
+    	new webpack.HotModuleReplacementPlugin()
+    ]
+}
+```
+
+```js
+if(module.hot) {
+  //设置为true，则开启了HMR功能
+  module.hot.accept('./print.js', function () {
+    // 方法监听print.js文件的变化，一旦发生变化，其他默认不会重新打包构建。
+    print()
+  })
+}
+```
+
+#### source-map
+
+提供源代码到构建后代码映射技术。如果构建后代码出错了，通过映射关系追踪到源代码错误。
+
+```js
+//[inline-|hidden-|eval-][nosources-][cheap-[module-]]source-map
+//webpack.config.js
+module.exports = {
+  devtool:'inline-source-map'
+}
+```
+
+内联和外联的区别：外部生成了文件，内联没有；内联构建速度更快。
+
+source-map：外部 错误代码的准确信息和源代码的错误位置
+inline-sourcemap：内联
+hidden-source-map：外部 提示到错误代码的原因，但没有错误位置，不能追踪到源代码的错误
+eval-source-map：内联 每个文件都生成对应的source-map，都在eval
+nosource-source-map：外部 可以定位到错误代码的准确信息，但没有源代码的信息
+cheap-source-map：外部 源文件报错整行，仅精确到行
+cheap-module-source-map：外部 错误代码准确信息和源代码的错误位置。
+
+**开发环境**：速度快，调试更友好
+速度快（eval>inline>cheap>...）eval-cheap-source-map、eval-source-map
+调试友好 source-map、cheap-module-source-map
+
+**生产环境**：源代码要不要隐藏？调试要不要更友好
+
+### 生产环境
+
+#### oneOf
+
+```js
+module.exports = {
+  module: {
+    rules: [
+      {
+        //以下loader只会匹配一个
+        //注意：不能有两项配置处理同一个类型的文件
+        oneOf: [
+          {
+            test:/\.css$/,
+            use: [...commonCssLoader]
+          },
+          {
+            test:/\.less$/,
+            use: [...commonCssLoader,'less-loader']
+          },
+        ]
+      }
+    ]
+  },
+}
+```
+
+#### 缓存
+
+##### babel缓存
+
+```js
+{
+  test: /\.js$/,
+  exclude: /node_modules/,
+  loader: 'babel-loader',
+    options: {
+      presets: [
+        '@babel/preset-env',
+        {
+          userBuiltIns: 'usage',
+          corejs: {version: 3},
+          targets: {
+            chrome: '60',
+            firefox: '50'
+          }
+        }
+      ],
+        //开启babel缓存
+        //第二次构件时，会读取之前的缓存
+        cacheDirectory: true
+    }
+},
+```
+
+##### 文件资源缓存
+
+1. **hash**：修改文件名加入hash值，每次webpack打包会生成唯一的hash值。
+
+问题：由于使用同一个hash值，如果重新打包会导致所有缓存失效。
+
+```js
+module.exports = {
+  entry: './src/js/index.js',
+  output: {
+    filename: 'js/built.[hash:10].js',
+    path: resolve(__dirname,'build')
+  }
+  plugins: [
+    new MiniCssExtractPlugin({
+    	filename:'css/built.[hash:10].css'
+  	}),
+  ]
+}
+```
+
+2. chunkhash：根据chunk生成has值，如果来源同一个chunk，那么hash值就一样。
+3. contenthash：根据文件内容生成hash。不同文件hash不一样
+
+#### tree shaking
+
+去除无用代码，减少代码体积。
+
+1. 必须使用ES6模块化
+2. 开启production
+
+```js
+//pacakge.json
+
+//所有代码都没有副作用（都可以进行tree shaking）
+//此时会导致css/ @babel/polyfill等文件被删除
+"sideEffects": false
+
+//过滤
+"sideEffects": ["*.css","*.less"]
+```
+
+#### code split
+
+代码分割，按需加载。
+
+1. **方式1**
+
+```js
+const { resolve } = require('path')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+
+//配置
+module.exports = {
+  // 单入口
+  // entry: './src/js/index.js'
+  // 多入口
+  entry: {
+    main:'./src/js/index.js',
+    test:'./src/js/test.js'
+  },
+  output: {
+    filename: 'js/[name].[contenthash:10].js',
+    path: resolve(__dirname,'build'),
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './src/index.html',
+      minify: {
+        collapseWhitespace: true,
+        removeComments: true
+      }
+    })
+  ],
+  mode:'production'
+}
+```
+
+2. **方式2**
+
+```js
+//可配合多入口
+
+//将node_modules中代码单独打包一个chunk最终输出
+//按需引入，对于公共依赖会打包成单独一个chunk，多页面不会重复加载，单独加载。
+module.exports = {
+  optimization: {
+    splitChunks: {
+      chunks: 'all'
+    }
+  }
+}
+```
+
+3. **方式3**
+
+```js
+// import动态导入
+//通过js代码，让某个文件单独打包成chunk
+//此时test.js会单独打包
+import(/* webpackChunkName: 'test' */'./test')
+	.then(({mul, count}) => {
+  	mul(1, 2);
+	})
+	.catch(() => {
+  	console.log('加载成功')
+	})
+```
+
+#### 懒加载与预加载
+
+```js
+//import { mul } from './test'
+document.getElementById('btn').onclick = function() {
+  // 懒加载
+  // 预加载 Prefetch：会在使用前提前加载js文件
+  //正常加载时并行加载，预加载资源在浏览器空闲时再加载。
+  import(/* webpackChunkName: 'test', webpackPrefetch: true */'./test')
+  	.then(({ mul }) => {
+    	console.log(mul(4, 5));
+  	})
+}
+```
+
+#### PWA
+
+渐进式网络开发应用程序（离线可访问）
+
+```shell
+yarn add workbox-webpack-plugin -D #workbox
+```
+
+```js
+const { resolve } = require('path')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+const WorkboxWebpackPlugin = require('workbox-webpack-plugin')
+
+module.exports = {
+  entry: './src/js/index.js'
+  output: {
+    filename: 'js/[name].[contenthash:10].js',
+    path: resolve(__dirname,'build'),
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './src/index.html',
+      minify: {
+        collapseWhitespace: true,
+        removeComments: true
+      }
+    }),
+    new WorkboxWebpackPlugin.GenerateSW({
+      //帮助serviceworker快速启动
+      //删除旧的serviceworker
+      //生成一个serviceworker配置文件
+      clientsClaim: true,
+      skipWaiting: true
+    })
+  ],
+  mode:'production'
+}
+```
+
+```js
+//index.js 入口文件
+if('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./service-worker.js')
+    	.then(() => {
+      	console.log('succ')
+    	})
+    	.catch(() => {
+	      console.log('err')
+    	});
+  });
+}
+```
+
+```json
+//package.json
+//若配置了eslint，针对于window、navigator等eslint会报错，修改配置解决
+"eslintConfig": {
+  "extends": "airbnb-base",
+  "env": {
+    //支持浏览器
+    "browser": true
+  }
+}
+```
+
+#### 多进程打包
+
+```shell
+yarn add thread-loader -D
+```
+
+```js
+{
+  test: /\.js$/,
+  exclude: /node_modules/,
+  use: [
+    //开启多进程打包，启动大概需要600ms
+    //工作消耗时间长，才需要多进程打包
+    {
+      loader:'thread-loader',
+      options: {
+        workers: 2 //进程数
+      }
+    },
+    {
+      loader: 'babel-loader',
+      options: {
+        presets: [
+          '@babel/preset-env',
+          {
+            userBuiltIns: 'usage',
+            corejs: {version: 3},
+            targets: {
+              chrome: '60',
+              firefox: '50'
+            }
+          }
+        ],
+        //开启babel缓存
+        //第二次构件时，会读取之前的缓存
+        cacheDirectory: true
+      }
+    }
+  ]
+},
+```
+
+#### externals
+
+```js
+const { resolve } = require('path')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+
+//配置
+module.exports = {
+  entry: './src/js/index.js',
+  output: {
+    filename: 'js/[name].[contenthash:10].js',
+    path: resolve(__dirname,'build'),
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './src/index.html',
+      minify: {
+        collapseWhitespace: true,
+        removeComments: true
+      }
+    })
+  ],
+  mode:'production',
+  externals:{
+    //需要手动引入CDN链接
+    //忽略库名 -- npm库中的包名
+    jquery: 'jQuery'
+  }
+}
+```
+
+#### dll 动态链接库
+
+```shell
+yarn add add-asset-html-webpack-plugin -D #
+```
+
+```js
+//webpack.dll.js
+//使用dll技术对某些库进行单独打包，例如jquery、react、vue...
+//当运行webpack时候，默认查找webpack.config.js配置文件，因此需要指定webpack --config webpack.dll.js
+const { resolve } = require('path');
+const webpack = require('webpack');
+module.exports = {
+  entry: {
+    jquery: ['jquery']
+  },
+  output: {
+    filename: '[name].js',
+    path:resolve(__dirname,'dll'),
+    library: '[name]_[hash]' //打包的库里面想外暴露出取得内容叫什么名字
+  },
+  plugins: [
+    //打包生成一个manifest.json文件，提供和jquery映射
+    new webpack.DllPlugin({
+      name: '[name]_[hash]', //映射库暴露的内容名称
+      path: resolve(__dirname, 'dll/manifest.json') //输出文件路径
+    })
+  ],
+  mode:'production'
+}
+```
+
+```shell
+webpack --config webpack.dll.js #生成jquery.js和manifest.json
+```
+
+```js
+//webpack.config.js
+
+const { resolve } = require('path')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+const webpack = require('webpack');
+//将某个文件打包输出，并在html中自动引入该资源
+const AddAssetHtmlWebpackPlugin = require('add-asset-html-webpack-plugin')
+//配置
+module.exports = {
+  entry: './src/js/index.js',
+  output: {
+    filename: 'js/[name].[contenthash:10].js',
+    path: resolve(__dirname,'build'),
+  },
+  plugins: [
+    new HtmlWebpackPlugin({
+      template: './src/index.html',
+      minify: {
+        collapseWhitespace: true,
+        removeComments: true
+      }
+    }),
+    //告诉webpack那些库不参与打包。同时使用时的名称也需要修改
+    new webpack.DllReferencePlugin({
+      manifest: resolve(__dirname, 'dll/manifest.json')
+    }),
+    new AddAssetHtmlWebpackPlugin({
+      filename:resolve(__dirname, 'dll/manifest.json')
+    })
+  ],
+  mode:'production',
+}
+```
+
+## webpack配置详解
+
+### entry
+
+1. string值
+
+   制定一个js文件作为入口，打包形成一个chunk，输出一个bundle。默认名称为main
+
+2. array值
+
+   最终只形成一个chunk，输出出去只有一个bundle。只有在HMR功能中让html热更新生效。
+
+3. object值
+
+   形成多个chunk，输出多个bundle。
+
+```js
+const { resolve } = require('path')
+const HtmlWebpackPlugin = require('html-webpack-plugin')
+
+//配置
+module.exports = {
+  // entry: './src/index.js',
+  // entry: ['./src/index.js', './src/test.js'],
+  entry: {'./src/index.js', './src/test.js'},
+  output: {
+    filename: '[name].js',
+    path: resolve(__dirname,'build'),
+  },
+  plugins: [
+    new HtmlWebpackPlugin(),
+  ],
+  mode:'development',
+}
+```
+
+### output
+
+```js
+output: {
+  //文件名称
+  filename: 'js/[name].js',
+  //输出文件目录
+  path: resolve(__dirname, 'build'),
+  // 所有资源引入公共路径前缀 imgs/a.jpg --> /imgs/a.jpg
+  publicPath:'/',
+  //非入口chunk的名称 动态import或者optimization中的配置
+  chunkFilename: '[name]_chunk.js', //在js动态引用中写注释改名
+  // 整个库向外暴露的变量名
+  library: '[name]',
+  libraryTarget: 'window' //变量明天加到哪个上browser、node端global、amd、commonjs等
+}
+```
+
+### loader
+
+```js
+module: {
+  rules: [
+    {
+      test:/\.css$/,
+      //多个loader用use
+      use:['style-loader','css-loader']
+    },
+    {
+      test: /\.js$/,
+      //排除
+      exclude: /mode_module/,
+      //只检查src下的js
+      include: resolve(__dirname,'src'),
+      //优先执行
+      enforce:'pre',
+      //延后执行
+      //enforce:'post'
+      //单个loader用loader
+      loader: 'eslint-loader'
+    },
+    {
+      //以下配置只会生效一个
+      oneOf:[]
+    }
+  ]
+}
+```
+
+### resolve
+
+```js
+//解析模块的规则
+resolve: {
+  //配置解析模块路径别名 在写路径时候可以简写成 import '$css/index.css'
+  alias: {
+    $css: reslove(__dirname,'src/css')
+  },
+  //配置文件省略文件路径的后缀名
+  extensions: ['.js', '.json', '.jsx', '.css'],
+  //告诉webpack解析模块时去哪个目录找
+  modules: [resolve(__dirname,'../../node_modules'),'node_modules']
+}
+```
+
+### devServer
+
+```js
+devServer: {
+  //运行代码的目录
+  contentBase: resolve(__dirname, 'build'),
+  //监视文件目录下的所有文件，一旦变化就会reload
+  watchContentBase: true,
+  watichOptions: {
+    //忽略文件
+    ignored: /node_modules/
+  }
+  //启动gzip压缩
+  compress: true,
+  port: 5000,
+  host: 'localhost',
+  open: true,
+  hot: true,
+  //日志等级
+  clientLogLevel: 'none',
+  //除了基本启动信息，其他内容不打印
+  quiet: true,
+  //如果出错了，不要全屏提示
+  overlay: false
+  //服务器代理，开发环境跨域
+  proxy: {
+    '/api': {
+      target: 'http://localhost:3000',
+      pathRewrite: { //路径重写
+        '^/api': ''
+      }
+    }
+  }
+}
+```
+
+### optimization
+
+```js
+//需要引入 const TerserWebpackPlugin = require('terser-webpack-plugin')
+
+optimization: {
+  splitChunks: {
+    chunks: 'all',
+    //下面一般情况均为默认值
+    minSize: 30 * 1024 //分割的chunk最小为30kb
+    maxSize: 0,
+    minChunks: 1, //要提取的chunk最少被引用1次
+    maxAsyncRequests: 5, //按需加载时，并行加载文件的最大数量
+    maxInitialRequest: 3, //入口js文件最大并行请求数量
+    automaticNameDelimiter: '~', //名称连接符
+    name: true, //可以使用命名规则
+    cacheGroups: { //分割chunk的组
+      //node_modules文件会被打报到vendors组的chunk中 vendors~xxx.js
+      //满足上面的公共规则，如超过30kb，至少被引用一次
+      vendors: {
+        test: /[\\/]node_modules[\\/]/,
+        //优先级
+        priority: -10
+      },
+      default: {
+        minChunks: 2,
+        priority: -20,
+        //如果当前要打包的模块，和之前已经提取的模块是同一个，就会复用，俄日不是重新打包模块
+        reuseExistingChunk: true
+      }
+    }
+  },
+  //将当前模块的记录其他模块的hash单独打包为一个文件runtime
+  //否则在修改其他模块代码时，当晚模块引用的hash值需要变化，引发缓存失效
+  runtimeChunk: {
+    name: entrypoint => `runtime-${entrypoint.name}`
+  },
+  minimize: true,
+  minimizer: {
+    //配置生产环境压缩方案：js/css
+    new TerserWebpackPlugin({
+      //开启缓存
+      cache: true,
+      //开启多进程打包
+      parallel: true,
+      //启用source-map
+      sourceMap: true,
+      terserOptions: {
+        // https://github.com/webpack-contrib/terser-webpack-plugin#terseroptions
+      }
+    })
+  }
+}
+```
+
+## webpack5
+
+```js
+//webapck.config.js
+
+//webpack4
+const { resolve } = require('path')
+module.exports = {
+  entry:'./src/index.js',
+  output: {
+    filename:'js/built.js',
+    path:resolve(__dirname,'build')
+  },
+  mode:'development',
+}
+
+//webpack5 其他均为默认配置
+module.exports = {
+  mode: 'development'
+}
+```
+
+1.  通过持久缓存提高构建性能
+2. 使用 更好地算法和默认值来改善长期缓存
+3. 更好的树摇和代码生成来改善捆包大小
+
+可以不使用webpackChunkName来为chunk命名（开发环境），生产环境还是有必要的。
+
+可以对嵌套模块tree shaking，可以对Commonjs的tree shaking
+
+通过output.ecmaVersion:2015 来指定es6输出代码
+
+### SplitChunk
+
+```js
+//webpack4
+minSize: 30000,
+
+//webpack5
+minSize: {
+  javascript: 30000,
+  style: 20000,
+}
+```
+
+### Caching
+
+```js
+//配置缓存
+cache: {
+  //磁盘存储
+  type:'filesystem',
+  buildDependencies: {
+    //当配置修改时，缓存失效
+    config: [__filename]
+  }
+}
+//缓存将存储到node_modules/.cache/webpack
+```
+
+### 默认值
+
+```js
+entry: './src/index.js',
+output: {
+  filename:'[name].js',
+  path:resolve(__dirname,'dist')
+},
+```
 
