@@ -1235,3 +1235,61 @@ output: {
 },
 ```
 
+# Webpack高级
+
+## vue-cli脚手架原理
+
+```shell
+vue create vue_cli
+vue inspect --mode=deveplopment > webpack.dev.js #将环境配置输出
+vue inspect --mode=production > webpack.prod.js
+```
+
+具体配置见webpack.dev.js及webpack.prod.js。
+
+## webpack配置
+
+### loader使用
+
+本质是一个函数
+
+```js
+// webpack.config.js
+const path = require('path')
+module.exports = {
+  module: {
+    rules: [
+      test: /\.js$/,
+      //loader: 'loader1.js'
+      // 执行顺序为 loader1pitch loader2pitch loader3pitch loader3 loader2 loader1
+      use: [
+      	'loader1',
+      	'loader2',
+      	'loader3'
+    	]
+    ]
+	},
+  //配置loader解析规则
+  resolveLoader: {
+    modules:[
+      'node_modules',
+      path.resolve(__dirname, 'loaders')
+    ]
+  }
+}
+```
+
+```js
+// loaders/loader1.js
+//loader本质是一个函数
+module.exports = function(content, map, meta) {
+  console.log(content);
+  return content;
+}
+
+//会相反解析，首先执行pitch方法
+module.export.pitch function() {
+  console.log('pitch')
+}
+```
+
