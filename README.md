@@ -1249,7 +1249,7 @@ vue inspect --mode=production > webpack.prod.js
 
 ### webpack配置
 
-#### loader
+#### Loader
 
 ##### 定义loader
 
@@ -1353,7 +1353,7 @@ module.exports = function(content, map, meta) {
 }
 ```
 
-##### 自定义loader
+##### 自定义babel-loader
 
 ```js
 const { getOptions } = require('loader-utils');
@@ -1379,8 +1379,6 @@ module.exports = function(content, map, meta) {
     transform(content, options)
     	.then(({code, map}) => callback(null, code, map, meta))
     	.catch((e) => callback(e))
-    
-    
 }
 ```
 
@@ -1400,8 +1398,287 @@ module.exports = function(content, map, meta) {
 
 #### Plugin
 
-主要为compiler钩子和compilation钩子。
+主要为compiler钩子（运行）和compilation钩子（编译）。
 
 compiler钩子extend自Tapable类，用来注册和调用插件。
 
 ##### Tapable
+
+```shell
+yarn add tapable -D
+```
+
+```js
+const { SyncHook, SyncBailHook, AsyncParallelHook, AsyncSeriesHook } = require('tapable');
+
+class Lesson {
+  constructor() {
+    //初始化hooks容器
+    this.hooks = {
+      //同步钩子
+      go: new SyncHook(['address'])
+      //一单有返回值则退出，不会继续向下执行hooks
+      //go: new SyncBailHook(['address'])
+      
+      //异步钩子
+      //异步并行钩子，两个函数会并行输出。
+      leave: new AsyncParalleHook(['name','age'])
+      //异步串行，按顺序运行
+      //leave: new AsyncSeriesHook(['name','age'])
+    }
+  }
+  tap() {
+    //往hooks中注册事件/添加回调函数
+    this.hooks.go.tap('classroom1', (address) => {
+      console.log('classroom1', address)
+      return 0;
+    })
+    this.hooks.go.tap('classroom2', (address) => {
+      console.log('classroom2', address)
+    })
+    
+    this.hooks.leave.tapAsync('classroom3', (name, age, callback) => {
+      setTimeout(() => {
+        console.log(name,age);
+        callback();
+      },1000)
+    })
+    //返回一个Promise
+    this.hooks.leave.tapPromise('classroom3', (name, age) => {
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          console.log(name,age);
+          resolve();
+        },1000)
+      })
+    })
+  }
+  start() {
+    //触发hooks
+    this.hooks.go.call('c318');
+    this.hooks.leave.callAsync('jack',18, function() {
+      //代表所有leave容器中的函数触发完了，才触发
+      console.log('end')
+    });
+  }
+}
+
+const l = new Lesson();
+l.tap();
+l.start();
+```
+
+##### compiler钩子
+
+具体钩子见官方文档
+
+```shell
+yarn add webpack wepack-cli -D
+```
+
+```js
+//webpack.config.js
+const Plugin1 = require('./plugins/Plugin1')
+
+module.exports = {
+  plugins: [
+    new Plugin1()
+  ]
+}
+```
+
+```js
+class Plugin1 {
+  apply(compiler) {
+    compiler.hooks.emit.tap('Plugin1', (compilation) => {
+      console.log('emit.tap 1')
+    })
+    compiler.hooks.emit.tapAsync('Plugin1', (compilation, cb) => {
+      setTimeout(() => {
+        console.log('emit.tap 1')
+        cb()
+      },1000)
+    })
+    compiler.hooks.afterEmit.tap('Plugin1', (compilation) => {
+      console.log('afterEmit.tap 1')
+    })
+    compiler.hooks.done.tap('Plugin1', (stats) => {
+      console.log('done.tap 1')
+    })
+  }
+}
+module.exports = Plugin1;
+```
+
+##### compilation钩子
+
+```js
+const fs = require('fs');
+const util = require('util');
+const path = require('path')
+const webpack = require('webpack')
+const { RawSource } = webpack.sources;
+//将fs.readFile编程基于promise风格的异步方法
+const readFile = util.promisify(fs.readFile);
+class Plugin2 {
+  apply(compiler) {
+    //初始化compilation钩子
+    compiler.hooks.thisCompilation.tap('Plugin2', (compilation) => {
+      debugger
+      console.log(compilation)
+      const content = 'hello plugin2'
+      compilation.hooks.additionalAssets.tapAsync('Plugin2', (cb) => {
+        //往要输出资源中，添加一个文件
+        compilation.assets['a.txt'] = {
+          //文件大小
+          size() {
+            return content.length;
+          },
+          //文件内容
+          source() {
+            return content;
+          }
+        }
+        const data = await readFile(path.resolve(__dirname,'b.txt'));
+        compilation.assets['b.txt'] = new RawSource(data);
+        //等价方式
+        compilation.emitAsset('b.txt',new RawSource(data));
+        cb();
+      })
+    })
+  }
+}
+module.exports = Plugin2;
+```
+
+```shell
+#调试webpack,首行断点
+node --inspect-brk ./node_modules/webpack/bin/webpack.js
+```
+
+##### 自定义copy-webpack-plugin
+
+```js
+//webpack.config.js
+const CopyWebpackPlugin = require('./plugins/CopyWebpackPlugin')
+module.exports = {
+  plugins: [
+    new CopyWebpackPlugin({
+      from: 'public',
+      //to : '.',
+      ignore: ['**/index.html']
+    })
+  ]
+}
+```
+
+```json
+//schema.json
+{
+  "type":"object",
+  "properties": {
+    "from": {
+      "type": "string"
+    },
+    "to": {
+      "type": "string"
+    },
+    "ignore": {
+      "type": "array"
+    }
+  },
+  "additionalProperties": false
+}
+```
+
+```js
+//CopyWebpackPlugin
+const { validate } = require('schema-utils');
+const glpbby = require('globby')
+const schema = require('./schema')
+const path = require('path')
+const webpack = require('webpack')
+const fs = require('fs')
+const util = require('util');
+
+const { RawSource } = webpack.sources;
+//将fs.readFile编程基于promise风格的异步方法
+const readFile = util.promisify(fs.readFile);
+
+class CopyWebpackPlugin {
+  constructor(option = {}) {
+    //验证options参数
+    validate(schema, option, {
+      name:"CopyWebpackPlugin"
+    }
+    this.options = options;
+  }
+  
+  apply(compiler) {
+    compiler.hooks.thisCompilation.tap('CopyWebpackPlugin', (compilation) => {
+      //添加资源的钩子函数
+      compilation.hooks.additionalAssets.tapAsync('CopyWebpackPlugin', async (cb) => {
+        //将from中的资源复制到to下面输出
+        //读取from中所有资源，过滤ignore的文件，生成webpack格式的资源，添加到compilation中输出
+        const { from, ignore } = this.options;
+        const to = this.options.to ? this.options.to : '.';
+        
+        // 1. 获取webpack配置中的上下文路径
+        const context = compiler.options.context; // process.cwd()
+        const absoluteFrom = path.isAbsolute(from) ? from : path.resolve(context, from);
+        //globby(要处理的文件夹，options)
+        const paths = await globby(absoluteFrom, { ignore });
+        
+        // 2. 读取paths中所有资源
+        const files = await Promise.all(
+          paths.map(async (absolutePath) => {
+            //读取文件
+            const data = await readFile(absolutePath);
+            const relativePath = path.basename(absolutePath);
+            //和to属性结合
+            const filename = path.join(to, relativePath);
+            return {
+              data,
+              filename
+            }
+          })
+        )
+        // 3. 生成webpack格式资源
+        const assets = files.map((file) => {
+          const source = new RawSource(file.data);
+          return {
+            source,
+            filename: file.filename
+          }
+        })
+        // 4. 添加compilation中
+        assets.forEach((asset) => {
+          compilation.emitAsset(asset.filename, asset.source);
+        })
+        
+        cb();
+      })
+    })
+  }
+}
+module.exports = CopyWebpackPlugin;
+```
+
+### Webpack执行流程
+
+1. 初始化Compiler：new Webpack(config) 得到 Compiler 对象。
+2. 开始编译：用上一步得到的参数初始化 Compiler 对象，加载所有配置的插件，执行对象的run 方法开始执行编译；
+3. 确定入口：根据配置中的 entry 找出所有的入口文件；
+4. 编译模块：从入口文件出发，调用所有配置的 Loader 对模块进行翻译，再找出该模块依赖的模块，再递归本步骤直到所有入口依赖的文件都经过了本步骤的处理；
+5. 完成模块编译：在经过第4步使用 Loader 翻译完所有模块后，得到了每个模块被翻译后的最终内容以及它们之间的依赖关系；
+6. 输出资源：根据入口和模块之间的依赖关系，组装成一个个包含多个模块的 Chunk，再把每个 Chunk 转换成一个单独的文件加入到输出列表，这步是可以修改输出内容的最后机会；
+7. 输出完成：在确定好输出内容后，根据配置确定输出的路径和文件名，把文件内容写入到文件系统。
+
+　　在以上过程中，Webpack 会在特定的时间点广播出特定的事件，插件在监听到感兴趣的事件后会执行特定的逻辑，并且插件可以调用 Webpack 提供的 API 改变 Webpack 的运行结果。
+
+### 自定义Webpack
+
+**P1**：通过@babel/parse生成的抽象语法树，对应于index.js文件的四条语句。
+
+<img src="README.assets/image-20210705153919153.png" alt="image-20210705153919153" style="zoom:67%;" />
+
