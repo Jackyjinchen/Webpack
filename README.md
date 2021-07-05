@@ -2,7 +2,7 @@
 
 ![image-20210630162757119](README.assets/image-20210630162757119.png)
 
-## webpack核心概念
+## Webpack核心概念
 
 1. **Entry**
 
@@ -29,7 +29,7 @@
 
 
 
-## webpack设置
+## Webpack设置
 
 ```shell
 yarn add webpack webpack-cli -D
@@ -519,7 +519,7 @@ module.exports = {
 }
 ```
 
-## webpack优化
+## Webpack优化
 
 ### 开发环境
 
@@ -973,7 +973,7 @@ module.exports = {
 }
 ```
 
-## webpack配置详解
+## Webpack配置详解
 
 ### entry
 
@@ -1165,7 +1165,7 @@ optimization: {
 }
 ```
 
-## webpack5
+## Webpack5
 
 ```js
 //webapck.config.js
@@ -1235,9 +1235,9 @@ output: {
 },
 ```
 
-# Webpack高级
+## Webpack高级
 
-## vue-cli脚手架原理
+### vue-cli脚手架原理
 
 ```shell
 vue create vue_cli
@@ -1247,9 +1247,11 @@ vue inspect --mode=production > webpack.prod.js
 
 具体配置见webpack.dev.js及webpack.prod.js。
 
-## webpack配置
+### webpack配置
 
-### loader使用
+#### loader
+
+##### 定义loader
 
 本质是一个函数
 
@@ -1265,8 +1267,13 @@ module.exports = {
       use: [
       	'loader1',
       	'loader2',
-      	'loader3'
-    	]
+      	{
+        	loader:'loader3',
+        	options: {
+        		name: 'jack'
+        	}
+        }
+      ]
     ]
 	},
   //配置loader解析规则
@@ -1282,9 +1289,25 @@ module.exports = {
 ```js
 // loaders/loader1.js
 //loader本质是一个函数
+//同步方式1
 module.exports = function(content, map, meta) {
   console.log(content);
   return content;
+}
+
+//同步方式2
+module.exports = function(content, map, meta) {
+  console.log(content);
+  this.callback(null, content, map, meta)
+}
+
+//异步方式
+module.exports = function(content, map, meta) {
+  console.log(content);
+  const callback = this.async();
+  setTimeout(() => {
+      callback(null, content);
+  },1000)
 }
 
 //会相反解析，首先执行pitch方法
@@ -1293,3 +1316,92 @@ module.export.pitch function() {
 }
 ```
 
+##### loader配置获取及校验
+
+```shell
+yarn add loader-utils schema-utils -D
+```
+
+```js
+const { getOptions } = require('loader-utils');
+const { validate } = require('schema-utils');
+const schema = require('./schema')
+module.exports = function(content, map, meta) {
+  //获取options
+  const options = getOptions(this);
+  console.log(options);
+  //校验options是否合法
+  validate(schema, options, {
+      name: 'loader-name'
+  })
+  return content;
+}
+```
+
+```json
+// schema.json
+{
+    "type": "object",
+    "properties": {
+        "name": {
+            "type": "string",
+            "description": "名称"
+        }
+    },
+    //允许追加属性
+    "additionalProperties": true
+}
+```
+
+##### 自定义loader
+
+```js
+const { getOptions } = require('loader-utils');
+const { validate } = require('schema-utils');
+const babel = require('@babel/core');
+const uilt = require('util');
+
+const schema = require('./babelSchema')
+
+//babel.transform用来编译代码的方法
+//是一个普通异步方法
+//util.promisify将普通异步方法转化成基于promise的异步方法。
+const transform = util.promisify(babel.transform);
+
+module.exports = function(content, map, meta) {
+    const options = getOptions(this) || {};
+    validate(schema, options, {
+       	name:"Babel Loader"
+    });
+    //创建异步
+    const callback = this.async();
+    //使用babel编译代码
+    transform(content, options)
+    	.then(({code, map}) => callback(null, code, map, meta))
+    	.catch((e) => callback(e))
+    
+    
+}
+```
+
+```json
+// babelSchema.json
+{
+    "type": "object",
+    "properties": {
+        "presets": {
+            "type": "array",
+        }
+    },
+    //允许追加属性
+    "additionalProperties": true
+}
+```
+
+#### Plugin
+
+主要为compiler钩子和compilation钩子。
+
+compiler钩子extend自Tapable类，用来注册和调用插件。
+
+##### Tapable
