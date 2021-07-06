@@ -965,8 +965,9 @@ module.exports = {
     new webpack.DllReferencePlugin({
       manifest: resolve(__dirname, 'dll/manifest.json')
     }),
+    // 将文件打包出去，并在html中自动引入该资源
     new AddAssetHtmlWebpackPlugin({
-      filename:resolve(__dirname, 'dll/manifest.json')
+      filename:resolve(__dirname, 'dll/jquery.js')
     })
   ],
   mode:'production',
@@ -1065,7 +1066,7 @@ module: {
 resolve: {
   //配置解析模块路径别名 在写路径时候可以简写成 import '$css/index.css'
   alias: {
-    $css: reslove(__dirname,'src/css')
+    $css: resolve(__dirname,'src/css')
   },
   //配置文件省略文件路径的后缀名
   extensions: ['.js', '.json', '.jsx', '.css'],
@@ -1082,7 +1083,7 @@ devServer: {
   contentBase: resolve(__dirname, 'build'),
   //监视文件目录下的所有文件，一旦变化就会reload
   watchContentBase: true,
-  watichOptions: {
+  watchOptions: {
     //忽略文件
     ignored: /node_modules/
   }
@@ -1594,7 +1595,7 @@ module.exports = {
 ```js
 //CopyWebpackPlugin
 const { validate } = require('schema-utils');
-const glpbby = require('globby')
+const globby = require('globby')
 const schema = require('./schema')
 const path = require('path')
 const webpack = require('webpack')

@@ -44,7 +44,7 @@ class Compiler {
                 }
             }
         }, {});
-        // console.log(depsGraph)
+        console.log(depsGraph)
         this.generate(depsGraph)
     }
 

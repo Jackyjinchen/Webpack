@@ -1,4 +1,4 @@
-{
+module.exports = {
   mode: 'development',
   context: '/Users/jindoc/Documents/LocalGit/vue-test',
   node: {
@@ -39,6 +39,7 @@
       {}
     ]
   },
+  //指定loader搜索位置
   resolveLoader: {
     modules: [
       '/Users/jindoc/Documents/LocalGit/vue-test/node_modules/@vue/cli-plugin-babel/node_modules',
